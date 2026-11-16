@@ -1,137 +1,126 @@
-# Lab 2 – Parallel Word Counting in a Text Corpus with MPI
+# Lab 2: Parallel Word Counting in a Text Corpus with MPI
 
-Author: Jesús Márquez
-Course: Parallel Computing (PC2), Universidad del Norte
+Jesús Márquez
+Parallel Computing, Universidad del Norte
 
-## 2. Problem Description
+## Problem Description
 
-A generator script creates a `dataset/` folder with:
+The generator script creates a folder called `dataset/`. Inside there is a file `consulta.txt` with 200 words (one per line) and 3000 text files named `file_0001.txt` to `file_3000.txt`. All the files together have about 45 million words.
 
-- `consulta.txt`: 200 query words, one per line;
-- 3000 text files `file_0001.txt` … `file_3000.txt` (the corpus), about 45 million words in total.
+The goal is to count how many times each word of `consulta.txt` appears in the 3000 files and print the 10 most frequent words.
 
-The task is to count how many times each query word appears in the corpus and report the 10 most frequent ones.
+The files do not have the same size. Looking at `generator.py`, 60% of them have between 2,000 and 5,000 words, 30% between 10,000 and 20,000, and 10% between 50,000 and 100,000. So one big file can be the same work as 20 or more small ones. This is important for the lab because it is the reason the load ends up unbalanced.
 
-The corpus is deliberately heterogeneous: 60 % of the files have 2,000–5,000 words, 30 % have 10,000–20,000 and 10 % have 50,000–100,000. A large file costs up to 50 times more than a small one, so the way files are distributed among processes matters.
+We worked in three steps: first we ran the sequential program that was given, then we wrote an MPI version with a static distribution of the files (`mpi1.py`), and finally a second MPI version that tries to balance the load better (`mpi2.py`).
 
-The lab has three stages:
+Files in this repository:
 
-1. a sequential baseline (provided), used as the correctness and timing reference;
-2. MPI version 1 (`mpi1.py`): broadcast of the query and static file distribution;
-3. MPI version 2 (`mpi2.py`): a distribution strategy that reduces the load imbalance of version 1.
-
-Repository contents:
-
-| File | Description |
+| File | What it is |
 |---|---|
-| `generator.py` | Dataset generator (as provided, no changes) |
-| `baseline_secuencial.py` | Sequential baseline (as provided, no changes) |
-| `run_all.sh` | Batch script: generator, baseline, mpi1, mpi2 (as provided, no changes) |
-| `mpi1.py` | MPI version 1: static distribution |
-| `mpi2.py` | MPI version 2: dynamic distribution |
+| `generator.py` | Creates the dataset (given, not modified) |
+| `baseline_secuencial.py` | Sequential solution (given, not modified) |
+| `run_all.sh` | Script that runs everything (given, not modified) |
+| `mpi1.py` | MPI version 1, static distribution |
+| `mpi2.py` | MPI version 2, dynamic distribution |
 
-## 3. Environment and Execution Instructions
+## Environment and Execution Instructions
 
-Everything runs inside the course Docker image `augustosalazar/slim-mpi:2` (Python, Open MPI, mpi4py), so the only requirement on the host is Docker. All commands are executed from the repository folder.
+Everything was run with Docker using the image of the course, `augustosalazar/slim-mpi:2`, which already has Python, Open MPI and mpi4py. Nothing else has to be installed.
 
-On Linux/macOS/Git Bash use `-v "$(pwd)":/app`. On Windows CMD use `-v "%cd%:/app"`, and on PowerShell use `-v "${PWD}:/app"`.
+The commands below are written for Linux, macOS or Git Bash. In Windows CMD change `"$(pwd)":/app` to `"%cd%:/app"`, and in PowerShell to `"${PWD}:/app"`. They must be run from the folder of the repository.
 
-### 3a. Experimental Plan
+### Experimental Plan
 
-**Question.** How much faster than the sequential baseline is an MPI solution with static file distribution, how unbalanced is its workload, and does a dynamic distribution reduce that imbalance enough to give a real improvement in total time?
+What we wanted to find out:
 
-**Hypotheses.**
+1. How much faster is the MPI version with static distribution compared to the sequential one?
+2. Is the work really unbalanced between the processes, and how much?
+3. If we balance it better, does the total time go down?
 
-- H1: version 1 is faster than the baseline, but its speedup stays below the ideal S_p = p.
-- H2: because version 1 splits by number of files and file sizes are very different, its per-process local times differ (LI > 1).
-- H3: version 2 brings LI closer to 1 and therefore lowers the total time, since the total time is set by the slowest process.
+Before running anything we expected the MPI version to be faster but not 8 times faster with 8 processes, we expected some imbalance because the split is done by number of files and not by size, and we expected version 2 to be a bit faster than version 1.
 
-**Fixed factors.**
+To make the comparison fair we kept these things the same for the three programs:
 
-- Dataset: generated by `generator.py` with its default parameters (3000 files, 200 query words, seed 42). The generator is deterministic, so every program reads exactly the same corpus.
-- Environment: same machine, same Docker image, same container session for all programs.
-- Counting code: both MPI versions use the same counting loop as the baseline (split by whitespace, lowercase, set lookup). The only thing that changes between programs is how the work is distributed, so speedup measures parallelism and not a different algorithm.
-- Process count p: the value reported on the test machine by the course script [`detectar_procesos_mpi.py`](https://github.com/augustosalazar/mpi_taller_sudoku/blob/main/detectar_procesos_mpi.py).
+- The dataset. `generator.py` uses a fixed seed (42), so it always creates the same files.
+- The machine and the Docker image, all in one session.
+- The way of counting. `mpi1.py` and `mpi2.py` count the words with the same loop as the baseline (split the line, lowercase, check if the word is in the set). We did not use a faster way of counting because then the speedup would mix two things, the parallelism and a better algorithm.
+- The number of processes p. We used the value recommended by the script of the course, [detectar_procesos_mpi.py](https://github.com/augustosalazar/mpi_taller_sudoku/blob/main/detectar_procesos_mpi.py).
 
-**Variable factor.** The program: sequential baseline, `mpi1.py`, `mpi2.py`.
+What we measured:
 
-**Measurements.**
+- The total time of each program, 5 times each (the lab asks for at least 3). In the MPI programs rank 0 takes the time with `MPI.Wtime()`, starting before it reads `consulta.txt` and stopping when the global result is ready. This is the same part that the baseline measures. The time is printed as `EXECUTION_TIME=...` because that is the format `run_all.sh` looks for.
+- For every process, how many files it got, how many words it read and its local time (the time it spent counting its files).
 
-- 5 runs per program (the lab requires at least 3).
-- Total execution time. In the baseline it is the time printed by the script. In the MPI versions it is measured in rank 0 with `MPI.Wtime()`, from just before reading `consulta.txt` until the global result is built, which is the same span the baseline measures (process start-up and printing are excluded in all three). It is printed as `EXECUTION_TIME=<seconds>`, the format `run_all.sh` expects.
-- For each process: number of files assigned, tokens read and local processing time t_i (time spent counting its files).
+With that we calculated:
 
-**Metrics.**
+- T_seq and T_p, the average time of the sequential program and of each MPI version.
+- Speedup, S_p = T_seq / T_p.
+- Efficiency, E_p = S_p / p.
+- Load imbalance, LI = max(t_i) / mean(t_i), calculated in every run and then averaged. A value of 1.0 is perfect balance.
+- Relative spread, (max(t_i) − min(t_i)) / mean(t_i).
 
-- T_seq: mean time of the sequential runs. T_p: mean total time of the MPI runs.
-- Speedup S_p = T_seq / T_p. Efficiency E_p = S_p / p.
-- Load imbalance LI = max(t_i) / mean(t_i), computed per run and then averaged (1.0 is perfect balance).
-- Relative spread = (max(t_i) − min(t_i)) / mean(t_i).
+To check that the results are correct, the MPI programs compare their full count with the file `dataset/baseline_results.csv` that the baseline saves, and print `MATCHES_BASELINE=True` or `False`. We also compared the top 10.
 
-**Correctness check.** Each MPI run compares its complete global count with `dataset/baseline_results.csv` (written by the baseline) and prints `MATCHES_BASELINE=True/False`. The top 10 printed by each run is also compared with the baseline's.
+### Sequential baseline (what it does and how)
 
-### 3b. Sequential baseline (what it does and how)
-
-`baseline_secuencial.py` loads `consulta.txt` into a set, then opens every `file_*.txt` one after another. Each line is split by whitespace and converted to lowercase, and every word that belongs to the query set increments a `Counter`. At the end it saves all counts to `dataset/baseline_results.csv` and prints the execution time and the top 10.
+`baseline_secuencial.py` reads `consulta.txt` and saves the words in a set. Then it opens the `file_*.txt` files one by one. For each line it splits the words, changes them to lowercase, and if a word is in the set it adds 1 to its counter. At the end it writes all the counts to `dataset/baseline_results.csv` and prints the time and the top 10.
 
 ```bash
 docker run --rm -v "$(pwd)":/app augustosalazar/slim-mpi:2 python /app/baseline_secuencial.py
 ```
 
-### 3c. MPI version 1 (what it does and how)
+### MPI version 1 (what it does and how)
 
-`mpi1.py` follows the steps required by the lab:
+`mpi1.py` does what the lab describes:
 
 1. Rank 0 reads `consulta.txt`.
-2. Rank 0 sends the query set to all processes with `comm.bcast`.
-3. Rank 0 lists the `file_*.txt` files, sorted by name.
-4. Static distribution: the list is cut into p contiguous blocks with the same number of files (±1) and sent with `comm.scatter`. The split does not look at file sizes.
-5. Every process, rank 0 included, counts the query words in its block and measures its local time.
-6. Partial counters and statistics are collected in rank 0 with `comm.gather`.
-7. Rank 0 adds the counters, prints the files, tokens and local time of each process, LI, the baseline check, the top 10 and `EXECUTION_TIME`.
+2. Rank 0 sends the words to all the processes with `comm.bcast`.
+3. Rank 0 gets the list of `file_*.txt` files and sorts it by name.
+4. Rank 0 cuts the list in p consecutive parts with the same number of files and sends one part to each process with `comm.scatter`. This is the static distribution. It does not check how big the files are.
+5. Each process counts the words in its files and measures how long it took. Rank 0 also counts, it does not only coordinate.
+6. The partial results go back to rank 0 with `comm.gather`.
+7. Rank 0 adds the counters and prints, for each process, the number of files and the local time. Then it prints the LI, the comparison with the baseline, the top 10 and the total time.
+
+Example with 4 processes:
 
 ```bash
 docker run --rm -v "$(pwd)":/app augustosalazar/slim-mpi:2 mpirun --allow-run-as-root --oversubscribe -np 4 python /app/mpi1.py
 ```
 
-`mpi2.py` is run the same way; its design is explained in section 4d.
+`mpi2.py` is run in the same way. How it works is explained later, together with its results.
 
-### 3d. Test procedure
+### Test procedure
 
-The plan is executed in this order, in a single session:
+We did the steps in this order, without closing the session:
 
-1. **Process count.** Download the course script `detectar_procesos_mpi.py` (link in section 3a) into the repository folder and run it. Its recommended value is p.
+1. Download `detectar_procesos_mpi.py` into the folder and run it to get p.
 
    ```bash
    docker run --rm -v "$(pwd)":/app augustosalazar/slim-mpi:2 python /app/detectar_procesos_mpi.py
    ```
 
-2. **All programs.** Run the provided `run_all.sh` (unchanged) with that p and 5 runs. It regenerates the dataset, runs the baseline, then `mpi1.py` five times and `mpi2.py` five times, and saves one log per run in `results/logs/` and the total times in `results/times_summary.csv`.
+2. Run `run_all.sh` with that p and 5 runs. The script creates the dataset again, runs the baseline, then `mpi1.py` 5 times and `mpi2.py` 5 times. It saves a log for every run in `results/logs/`.
 
    ```bash
    docker run --rm -e NP_LIST=8 -e RUNS=5 -v "$(pwd)":/app augustosalazar/slim-mpi:2 sh /app/run_all.sh
    ```
 
-3. **Baseline repetitions.** `run_all.sh` runs the baseline only once, so the baseline command of section 3b is run four more times. T_seq is the mean of the five times.
+3. `run_all.sh` only runs the baseline once, so we ran it 4 more times with the command shown above to also have 5 times for the average.
 
-4. **Metrics.** From the logs: T_p is the mean of the five `EXECUTION_TIME` values of each MPI version; S_p and E_p follow from T_seq and T_p; LI and the relative spread are computed in each run from the `PROC ... local_time=` lines and then averaged. Each log also contains `MATCHES_BASELINE` and the top 10 for the correctness check.
+4. Take the times from the logs and calculate the metrics.
 
-To reduce noise, close other applications before running, keep the laptop plugged in and pause file-sync clients such as OneDrive if the repository is inside a synced folder.
+## Experimental Plan Execution
 
-## 4. Experimental Plan Execution
+The runs were done on November 16, 2026, on this machine:
 
-The plan of section 3d was executed in order on 16 November 2026. All numbers below come from that single session.
+- Laptop with an AMD Ryzen 5 5500U (6 cores, 12 threads)
+- Windows 11 with Docker Desktop (WSL2). Inside the container there are 12 CPUs and 7.8 GB of RAM available.
+- Python 3.8.20, mpi4py 4.1.1 and Open MPI 4.1.4 (the versions of the image)
+- The folder of the project is inside OneDrive and is mounted in the container with `-v`
 
-Test machine:
+`detectar_procesos_mpi.py` recommended **p = 8**, so all the MPI runs use 8 processes.
 
-- CPU: AMD Ryzen 5 5500U (6 cores, 12 threads), laptop.
-- Windows 11 with Docker Desktop on WSL2 (kernel 6.6.87.2). The container sees 12 logical CPUs and 7.8 GB of RAM.
-- Image `augustosalazar/slim-mpi:2`: Python 3.8.20, mpi4py 4.1.1, Open MPI 4.1.4.
-- The repository folder is mounted into the container from a Windows folder synchronized with OneDrive.
-
-Process count reported by `detectar_procesos_mpi.py`: **p = 8**.
-
-### 4a. Sequential baseline timing
+### Sequential baseline timing
 
 | Run | Time (s) |
 |---|---|
@@ -140,10 +129,10 @@ Process count reported by `detectar_procesos_mpi.py`: **p = 8**.
 | 3 | 95.75 |
 | 4 | 99.22 |
 | 5 | 112.20 |
-| **Mean (T_seq)** | **99.94** |
+| **Average (T_seq)** | **99.94** |
 | Std. dev. | 7.00 |
 
-Global output of the baseline: 3000 files, 44,951,458 tokens read, 3,631,778 occurrences found. Top 10:
+The baseline processed the 3000 files, read 44,951,458 words and found 3,631,778 occurrences of the query words. This is its top 10:
 
 | Word | Count |
 |---|---|
@@ -158,7 +147,7 @@ Global output of the baseline: 3000 files, 44,951,458 tokens read, 3,631,778 occ
 | mios | 58420 |
 | tuya | 56635 |
 
-### 4b. MPI version 1 timing results
+### MPI version 1 timing results
 
 | Run | Total time (s) |
 |---|---|
@@ -167,18 +156,20 @@ Global output of the baseline: 3000 files, 44,951,458 tokens read, 3,631,778 occ
 | 3 | 16.89 |
 | 4 | 16.67 |
 | 5 | 17.06 |
-| **Mean (T_p)** | **17.55** |
+| **Average (T_p)** | **17.55** |
 | Std. dev. | 1.11 |
 
-- Speedup: S_p = 99.94 / 17.55 = **5.69**
-- Efficiency: E_p = 5.69 / 8 = **0.71**
-- In the five runs the complete global count was equal to `baseline_results.csv` and the top 10 was identical to the baseline's.
+Speedup: S_p = 99.94 / 17.55 = **5.69**
 
-### 4c. Load imbalance evidence (per-process local times and LI)
+Efficiency: E_p = 5.69 / 8 = **0.71**
 
-Every process received 375 files, but not the same amount of text:
+In the 5 runs the count was the same as the baseline and the top 10 was also the same.
 
-| Rank | Files | Tokens | Mean local time t_i (s) |
+### Load imbalance evidence (per-process local times and LI)
+
+All the processes got 375 files, but the amount of words was different:
+
+| Rank | Files | Words | Average local time (s) |
 |---|---|---|---|
 | 0 | 375 | 6,002,531 | 16.84 |
 | 1 | 375 | 4,801,328 | 14.63 |
@@ -196,26 +187,28 @@ Every process received 375 files, but not the same amount of text:
 | 3 | 16.80 | 14.35 | 15.82 | 1.062 | 0.155 |
 | 4 | 16.59 | 13.07 | 14.93 | 1.111 | 0.236 |
 | 5 | 16.98 | 14.27 | 15.83 | 1.073 | 0.171 |
-| **Mean** | | | | **1.076** | **0.176** |
+| **Average** | | | | **1.076** | **0.176** |
 
-The order of the processes is the same in all five runs: rank 2, which received the most tokens (6.18 M), was always the slowest, and rank 1, which received the fewest (4.80 M), was always the fastest. Rank 2 got 29 % more text than rank 1 and needed 19 % more time. The slowest process worked on average 7.6 % longer than the mean, while rank 1 finished about 3 s before the end of every run and then had nothing to do.
+Rank 2 got the most words (6.18 million) and it was the slowest process in the 5 runs. Rank 1 got the fewest (4.80 million) and it was always the fastest. Rank 2 had 29% more words than rank 1 and took 19% more time. In every run rank 1 finished about 3 seconds before the program ended and after that it was doing nothing.
 
-### 4d. MPI version 2: how it corrects the imbalance, and its results
+### MPI version 2: how it corrects the imbalance, and its results
 
-**Cause of the imbalance.** Version 1 gives every process the same number of files, but the cost of a file is proportional to its number of words, and sizes range from 2,000 to 100,000 words. The blocks therefore contain different amounts of work. In addition, the processes do not necessarily run at the same speed (hyper-threads, background load), which a fixed assignment cannot compensate for.
+The problem of version 1 is that the files are assigned before knowing how much work each one is. Giving the same number of files is not the same as giving the same work.
 
-**Correction.** `mpi2.py` replaces the fixed assignment with an on-demand one:
+In `mpi2.py` the files are not assigned at the beginning. The processes ask for work when they need it:
 
-1. Rank 0 reads the query and lists the files as before, and broadcasts both to all processes.
-2. No file is assigned in advance. A worker sends a request to rank 0 and receives a chunk, described only by its position in the list (start, count). A process that is faster, or whose files turned out lighter, simply asks more often, so the work adapts to the real cost of the files and the real speed of each process.
-3. Chunk size is guided: each request receives about `remaining_files / (8p)` files. The first chunks are large, which keeps the number of messages low. The last chunks are a single file, so all processes run out of work almost at the same time.
-4. A worker asks for its next chunk before starting the current one, so the reply is normally already waiting when it finishes and it does not sit idle.
-5. Rank 0 also works. It counts single files from the end of the list and answers pending requests between files (`Iprobe`).
-6. When no files are left, rank 0 answers each request with a stop message, receives the partial results and builds the global result as in version 1.
+1. Rank 0 reads the query and the list of files and sends both to everyone with `comm.bcast`.
+2. Each worker sends a request to rank 0, and rank 0 answers with a group of files. Since all the processes already have the list, rank 0 only sends two numbers: where the group starts and how many files it has.
+3. The size of the group depends on how many files are left. Each request gets about (files left) / (8 × p). At the beginning the groups are big (46 files with p = 8), so there are few messages. At the end they are of 1 file, so no process is left with a lot of pending work while the others have finished.
+4. When a worker receives a group, it asks for the next one immediately and then starts counting. That way the answer is usually already there when it finishes.
+5. Rank 0 also counts. It takes files one at a time from the end of the list, and between one file and the next it checks with `Iprobe` if there are requests and answers them.
+6. When there are no files left, rank 0 tells the workers to stop, receives their results and builds the global result like in version 1.
 
-**Discarded first attempt.** Our first version 2 also read the size of every file so that it could hand out the largest files first. It balanced the load (LI ≈ 1.007 against ≈ 1.07 in version 1), but its total time was worse than version 1: 26–33 s, although every process spent only 15–20 s counting. Reading 3000 file sizes through the Docker bind mount cost about 11 s before any counting started. The final version does not need file sizes.
+A process that got light files finishes its group early and asks for more, so the work is balanced without knowing the size of the files.
 
-**Results (p = 8, 5 runs).**
+We had a previous attempt that did not work well and we think it is worth mentioning. In that one, rank 0 first asked for the size of the 3000 files to give the biggest ones first. The balance was almost perfect (LI of 1.007), but the total time was between 26 and 33 seconds, worse than version 1. The processes were counting for only 15 to 20 seconds, and the rest was lost at the start. We believe it was the reading of the 3000 file sizes, which is very slow through the Docker mount. We removed that part and the final version does not use the sizes.
+
+Results of the final `mpi2.py` with p = 8:
 
 | Run | Total time (s) | max t_i (s) | min t_i (s) | LI | Rel. spread |
 |---|---|---|---|---|---|
@@ -224,52 +217,57 @@ The order of the processes is the same in all five runs: rank 2, which received 
 | 3 | 18.49 | 18.18 | 17.41 | 1.023 | 0.043 |
 | 4 | 17.73 | 17.40 | 15.80 | 1.066 | 0.098 |
 | 5 | 17.22 | 16.75 | 15.99 | 1.032 | 0.047 |
-| **Mean** | **17.53** | | | **1.040** | **0.062** |
+| **Average** | **17.53** | | | **1.040** | **0.062** |
 
-Mean local time per process: rank 0 = 17.19 s; ranks 1 to 7 between 16.35 s and 16.55 s. The counts were equal to the baseline in the five runs.
+The average local time of rank 0 was 17.19 s. For ranks 1 to 7 it was between 16.35 s and 16.55 s. The counts matched the baseline in the 5 runs.
 
-Comparison of both versions (T_seq = 99.94 s):
+Both versions side by side (T_seq = 99.94 s):
 
-| Version | p | T_p (s) | Std. dev. (s) | Speedup S_p | Efficiency E_p | LI | Rel. spread |
+| Version | p | T_p (s) | Std. dev. (s) | Speedup | Efficiency | LI | Rel. spread |
 |---|---|---|---|---|---|---|---|
 | mpi1 (static) | 8 | 17.55 | 1.11 | 5.69 | 0.71 | 1.076 | 0.176 |
 | mpi2 (dynamic) | 8 | 17.53 | 0.96 | 5.70 | 0.71 | 1.040 | 0.062 |
 
-## 5. Analysis
+## Analysis
 
-### 5a. Parallel performance
+### Parallel performance
 
-Yes. Version 1 reduced the time from 99.94 s to 17.55 s, a speedup of 5.69 with 8 processes. That is 71 % of the ideal S_p = 8.
+Version 1 did improve the baseline. The time went from 99.94 s to 17.55 s, which is a speedup of 5.69. The ideal with 8 processes would be 8, so we got 71% of it.
 
-The gap has three measurable parts, which multiply: 8 / (1.30 × 1.076 × 1.005) ≈ 5.69.
+Most of the difference comes from the fact that the processes are slower when the 8 run at the same time. If we add the local times of the 8 processes we get about 130 s, but the sequential program does the same work in about 100 s. So the same work costs 30% more in parallel. We think there are two reasons. The laptop has 6 real cores, so with 8 processes some of them share a core. And all the processes read files from the same disk through the Docker mount.
 
-1. **The same work costs more when 8 processes run at once (factor 1.30).** The local times of the 8 processes add up to 129.95 s, while the sequential program does all the work in 99.94 s. This is the largest part of the gap. The machine has 6 physical cores, so with p = 8 some processes share a core through SMT, and all of them compete for the same file access path (the bind mount), memory and the thermal budget of a laptop CPU.
-2. **Load imbalance (factor 1.076).** The total time is set by the slowest process (17.47 s on average), not by the mean (16.24 s). With perfect balance and nothing else changed, the time would be about 16.3 s and the speedup about 6.1.
-3. **Communication and merging (factor 1.005).** The broadcast, scatter, gather and the final merge add only about 0.08 s.
+The second cause is the imbalance. The program does not end until the slowest process ends (17.47 s on average), while the average process needs 16.24 s. With a perfect balance the time would be around 16.3 s and the speedup around 6.1.
 
-### 5b. Load balance
+The communication is almost nothing. The total time is only 0.08 s more than the time of the slowest process, and that includes the broadcast, the scatter, the gather and adding the results.
 
-Version 1 showed a consistent imbalance: LI between 1.062 and 1.111 in the five runs (mean 1.076) and a relative spread of 0.176. It is not random noise, because the same processes were the slowest and the fastest in every run, and their local times follow the number of tokens they received (section 4c).
+These numbers are consistent with each other: 8 / (1.30 × 1.076) is about 5.7.
 
-Version 2 reduced the imbalance: mean LI went from 1.076 to 1.040 and the relative spread from 0.176 to 0.062. The seven workers ended almost perfectly balanced (16.35 s to 16.55 s).
+### Load balance
 
-It did not produce a real performance improvement. The mean total time changed from 17.55 s to 17.53 s (−0.1 %), which is far smaller than the variation between runs of the same program (standard deviation of about 1 s). The data explain why:
+In version 1 the LI was between 1.06 and 1.11 in the 5 runs, with an average of 1.076, and the relative spread was 0.176. We are sure it is a real imbalance and not noise because the slowest and the fastest process were the same ones in every run, and they are exactly the ones that received the most and the fewest words.
 
-- The possible gain was small from the start. Removing all the imbalance of version 1 would save at most about 7 % (1.2 s), which is similar to the noise of the measurement.
-- The dynamic scheme has its own costs. Rank 0 was the slowest process in all five runs (17.19 s against about 16.45 s for the workers): it answers requests only between its own files, so near the end the workers wait for it. The local times of version 2 add up to 132.3 s against 130.0 s in version 1, and coordination adds about 0.3 s after rank 0 finishes counting. These costs cancelled the benefit of the better balance.
+Version 2 did reduce it. The LI went down to 1.040 and the spread to 0.062. The 7 workers ended with almost the same local time (16.35 to 16.55 s).
 
-The discarded first attempt (section 4d) points the same way: it reached LI ≈ 1.007 and was still about 10 s slower than version 1 in the same session. In this problem, a lower LI does not by itself mean a lower total time.
+But the total time did not improve. It was 17.55 s before and 17.53 s now. That difference of 0.02 s means nothing when the times change by about 1 s from one run to another. So the answer is no, the reduction was not enough to give a real improvement.
 
-### 5c. Limitations
+Looking at the data we found two reasons. First, there was not much to win. Even removing all the imbalance of version 1 the gain would be 7% at most, about 1.2 s, which is close to the noise we have. Second, the dynamic version has a cost. Rank 0 was the slowest process in the 5 runs (17.19 s against about 16.45 s for the workers). Rank 0 can only answer requests when it finishes the file it is reading, so near the end the workers have to wait for it. What we gained with the balance we lost there.
 
-- **File access dominates the time.** The baseline needs about 100 s here, against roughly 5 s in the sample output of the course repository on another machine, for the same dataset. Most of the time is spent reading files through the Docker bind mount of a OneDrive folder, not counting words. The speedups describe this environment and would probably be different with the dataset on a native Linux file system. This is the limitation that weakens the conclusions the most.
-- **Noise.** With 5 runs per program, the standard deviation was 6 % to 7 % of the mean. The fifth baseline run (112.2 s) is an outlier; without it T_seq would be 96.9 s and the speedup of version 1 would be 5.52 instead of 5.69. Differences below about 7 % cannot be resolved, so the comparison of total times between both MPI versions is inconclusive.
-- **Order of execution.** The programs were run in blocks (baseline, version 1, version 2, baseline again) and not interleaved, so temperature and background activity of the laptop may affect each program differently.
-- **A single configuration.** One machine, one dataset (one seed) and one process count (p = 8, on 6 physical cores). Nothing can be said about how the two strategies scale with p or with other file size distributions.
-- **What is timed.** Process start-up (`mpirun`, Python imports) is excluded in all programs, so the real end-to-end speedup is somewhat lower.
+The failed attempt showed the same thing in a stronger way. It had the best LI of all and it was the slowest. A better LI does not always mean a shorter time.
 
-These limitations do not affect the qualitative results, which are much larger than the noise or repeat in every run: version 1 is between 5 and 6 times faster than the baseline, its imbalance is real and comes from the file sizes, and version 2 lowers LI. They do prevent us from claiming that either MPI version is faster than the other.
+### Limitations
 
-## 6. Conclusions
+The biggest limitation is that reading the files takes most of the time. Our baseline takes about 100 s, and the example output in the repository of the course shows about 5 s for the same dataset. The difference is that our files are in a OneDrive folder mounted in Docker, and that is slow. So our speedup is partly measuring how well the file reading works in parallel, and on another machine the numbers could be quite different.
 
-For this problem we recommend the dynamic, on-demand distribution of version 2, with a caveat. Both strategies gave the same performance within the measurement error: speedup 5.69 and efficiency 0.71 for the static version, against 5.70 and 0.71 for the dynamic one, with p = 8. The dynamic version cut the load imbalance from LI = 1.076 to LI = 1.040 (relative spread from 0.176 to 0.062), needs no knowledge of file sizes and adapts by itself to slower processes or heavier files, so it should behave better as the corpus becomes more heterogeneous or the processes less uniform. The caveat is that in our experiment this better balance did not translate into a lower total time, because the imbalance of the static split was only 7.6 % and the coordination cost of the dynamic scheme was of the same size. When simplicity matters more, the static split is an acceptable choice on this dataset. Efficiency was limited in both versions mainly by contention between processes (the same work cost 30 % more with 8 processes on 6 cores), not by the distribution strategy.
+There is also a lot of variation between runs, around 6 or 7%. For example the fifth run of the baseline took 112 s when the others took 96 to 99 s. If we leave that run out, T_seq is 96.9 s and the speedup of version 1 is 5.52 instead of 5.69. Because of this variation we cannot say which MPI version is faster.
+
+The programs were not run in mixed order. First all the runs of version 1 and then all of version 2, so if the laptop got hotter or something was running in the background it could affect one version more than the other.
+
+We only tested one machine, one dataset and p = 8. We do not know what happens with other values of p or with files of other sizes.
+
+The measured time does not include starting `mpirun` and Python, so the real speedup for a user is a bit lower.
+
+Even with these limitations, some results are clear because the differences are large or they repeated in all the runs: version 1 is between 5 and 6 times faster than the baseline, it has an imbalance that comes from the size of the files, and version 2 reduces the LI. What we cannot conclude is that one MPI version is faster than the other.
+
+## Conclusions
+
+For this problem we would recommend the dynamic distribution of version 2, but being honest about what we measured. In time, both versions are the same: speedup of 5.69 and efficiency of 0.71 for the static one, and 5.70 and 0.71 for the dynamic one. The difference is in the balance, where the LI went from 1.076 to 1.040. We prefer the dynamic one because it does not need to know the size of the files and it adapts by itself if a process is slower or if the files are more unequal, and with a more unbalanced dataset the static version would get worse while the dynamic one should not. In our case the imbalance of the static version was only 7.6% and the cost of coordinating was about the same, so there was no gain in time, and for a dataset like this one the static version is also a valid option because it is simpler. What limited the efficiency in both versions was not the distribution but the fact that 8 processes running together on 6 cores are slower than one alone.
